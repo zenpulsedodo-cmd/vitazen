@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "./supabase.js";
 
 // ─── COULEURS ─────────────────────────────────────────────────────────────────
 const C = {
@@ -1060,7 +1061,7 @@ function StatsPage({habits, isPremium, onPremium, perfectDays, earnProgress, pro
 }
 
 // ─── PROFILE PAGE ─────────────────────────────────────────────────────────────
-function ProfilePage({xp, habits, isPremium, streak, onPremium, notif, perfectDays, earnProgress, daysLeft, profile, setProfile, onSaved, lang, setLang}) {
+function ProfilePage({xp, habits, isPremium, streak, onPremium, notif, perfectDays, earnProgress, daysLeft, profile, setProfile, onSaved, lang, setLang, onLogout, userEmail}) {
   const t = T[lang] || T.fr;
   const [editMode, setEditMode] = useState(!profile?.height);
   const level = Math.floor(xp/100) + 1;
@@ -1101,6 +1102,7 @@ function ProfilePage({xp, habits, isPremium, streak, onPremium, notif, perfectDa
         <div style={{width:80, height:80, borderRadius:"50%", margin:"0 auto 12px", background:`linear-gradient(135deg,${C.lavender},${C.accent})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, boxShadow:`0 0 30px ${C.accent}44`}}>🧘</div>
         <div style={{fontSize:18, fontWeight:800, color:C.text}}>{lang==="en"?"Zen User":lang==="es"?"Usuario Zen":"Utilisateur Zen"}</div>
         <div style={{fontSize:13, color:C.accent, fontWeight:600, marginTop:4}}>{t.level} {level} · {xp} {t.xp} {isPremium?"✦":""}</div>
+        {userEmail && <div style={{fontSize:12, color:C.muted, marginTop:4}}>📧 {userEmail}</div>}
         <div style={{width:160, height:6, background:C.border, borderRadius:3, margin:"10px auto 0"}}>
           <div style={{width:`${prog}%`, height:"100%", background:C.accent, borderRadius:3}}/>
         </div>
@@ -1183,12 +1185,18 @@ function ProfilePage({xp, habits, isPremium, streak, onPremium, notif, perfectDa
           <div style={{color:C.muted}}>›</div>
         </div>
       ))}
+
+      {/* Bouton déconnexion */}
+      <button onClick={onLogout}
+        style={{width:"100%", padding:"14px", borderRadius:14, background:"transparent", border:`1px solid ${C.coral}55`, color:C.coral, fontWeight:700, fontSize:14, cursor:"pointer", marginTop:8}}>
+        🚪 {lang==="en"?"Log out":lang==="es"?"Cerrar sesión":"Se déconnecter"}
+      </button>
     </div>
   );
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
-export default function VitaZen() {
+export default function VitaZen({ session }) {
   const [tab, setTab] = useState("home");
   const [lang, setLang] = useState("fr");
   const [mood, setMood] = useState(null);
@@ -1197,8 +1205,52 @@ export default function VitaZen() {
   const [showPremium, setShowPremium] = useState(false);
   const [showEarned, setShowEarned] = useState(false);
   const [profile, setProfile] = useState({height:"", weight:"", gender:"neutral", goals:[]});
+  const [profileLoading, setProfileLoading] = useState(true);
   const STREAK = 18;
   const t = T[lang] || T.fr;
+
+  // Charge le profil depuis Supabase au démarrage
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!session?.user) return;
+      const { data } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", session.user.id)
+        .single();
+      if (data) {
+        setProfile({
+          height: data.height || "",
+          weight: data.weight || "",
+          gender: data.gender || "neutral",
+          goals: data.goals || [],
+        });
+        if (data.lang) setLang(data.lang);
+      }
+      setProfileLoading(false);
+    };
+    loadProfile();
+  }, [session]);
+
+  // Sauvegarde le profil dans Supabase
+  const saveProfile = async (newProfile) => {
+    setProfile(newProfile);
+    if (!session?.user) return;
+    await supabase.from("profiles").upsert({
+      id: session.user.id,
+      height: newProfile.height,
+      weight: newProfile.weight,
+      gender: newProfile.gender,
+      goals: newProfile.goals,
+      lang: lang,
+      updated_at: new Date().toISOString(),
+    });
+  };
+
+  // Déconnexion
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
 
   const xp = habits.length * 20 + 140;
   const pillars = {
@@ -1224,6 +1276,16 @@ export default function VitaZen() {
     if (perfectDays >= EARN_DAYS && !isPremium) setShowEarned(true);
   }, []);
 
+  if (profileLoading) {
+    return (
+      <div style={{background:C.bg, minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16}}>
+        <div style={{fontSize:48}}>🌿</div>
+        <div style={{color:C.accent, fontSize:22, fontWeight:700, fontFamily:"sans-serif"}}>Vita<span style={{color:C.text}}>Zen</span></div>
+        <div style={{color:C.muted, fontSize:14, fontFamily:"sans-serif"}}>Chargement de ton profil...</div>
+      </div>
+    );
+  }
+
   const navItems = [
     {id:"home",  icon:"🏠", label:t.home},
     {id:"stats", icon:"📊", label:t.stats},
@@ -1244,7 +1306,7 @@ export default function VitaZen() {
         <div style={{overflowY:"auto", height:"100vh"}}>
           {tab === "home"    && <HomePage    mood={mood} setMood={setMood} pillars={pillars} habits={habits} setHabits={setHabits} xp={xp} isPremium={isPremium} streak={STREAK} perfectDays={perfectDays} daysLeft={daysLeft} earnProgress={earnProgress} onPremium={() => setShowPremium(true)} notif={notif} profile={profile} lang={lang} setTab={setTab}/>}
           {tab === "stats"   && <StatsPage   habits={habits} isPremium={isPremium} onPremium={() => setShowPremium(true)} perfectDays={perfectDays} earnProgress={earnProgress} profile={profile} lang={lang}/>}
-          {tab === "profile" && <ProfilePage xp={xp} habits={habits} isPremium={isPremium} streak={STREAK} onPremium={() => setShowPremium(true)} notif={notif} perfectDays={perfectDays} earnProgress={earnProgress} daysLeft={daysLeft} profile={profile} setProfile={setProfile} onSaved={() => notif.showToast({emoji:"✅", title:t.profileSaved, body:t.profileSavedBody})} lang={lang} setLang={setLang}/>}
+          {tab === "profile" && <ProfilePage xp={xp} habits={habits} isPremium={isPremium} streak={STREAK} onPremium={() => setShowPremium(true)} notif={notif} perfectDays={perfectDays} earnProgress={earnProgress} daysLeft={daysLeft} profile={profile} setProfile={saveProfile} onSaved={() => notif.showToast({emoji:"✅", title:t.profileSaved, body:t.profileSavedBody})} lang={lang} setLang={setLang} onLogout={handleLogout} userEmail={session?.user?.email}/>}
         </div>
 
         <div style={{position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:420, background:`${C.surface}EE`, backdropFilter:"blur(20px)", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-around", padding:"12px 0 20px", zIndex:100}}>
